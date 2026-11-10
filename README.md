@@ -37,6 +37,7 @@
 
 - 走的是 DSH 现在用的同一个网关（tokendance，OpenAI 兼容接口），用 `.dsh/.credentials.yaml` 里的 `TOKENDANCE_API_KEY`，**不占 DeepSeek 官方 API 的 token 余额**；
 - 请求在后台 runspace 里跑，不会卡住桌宠动画；
+- 如果 .NET 的 TLS 在当前环境拿不到凭据（受限进程里会报 `underlying connection was closed`），会自动改用 `chat-node.js`（Node 自带 OpenSSL）再发一次，日志里会记 `已改用 node`；
 - 对话历史只存在内存里，关掉桌宠就没了；「清空」按钮重置上下文。
 
 可选的配置项（不写就用默认值）：

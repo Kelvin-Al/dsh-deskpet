@@ -49,6 +49,24 @@ function Get-ChatSystem {
     return '你是小鲸，一只住在 Windows 桌面上的 DeepSeek 桌宠。用简短、自然、可爱的中文回答，口语化，两三句话以内，不要用 Markdown 列表或代码块。'
 }
 
+# .NET 的 TLS 在受限环境里可能拿不到凭据，退回 Node（自带 OpenSSL）
+$script:chatNodeExe = $null
+$script:chatNodeChecked = $false
+function Find-ChatNode {
+    if ($script:chatNodeChecked) { return $script:chatNodeExe }
+    $script:chatNodeChecked = $true
+    $c = Get-Command node.exe -ErrorAction SilentlyContinue
+    if ($c) { $script:chatNodeExe = $c.Source; return $script:chatNodeExe }
+    $guess = Join-Path $env:USERPROFILE '.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
+    if (Test-Path $guess) { $script:chatNodeExe = $guess; return $script:chatNodeExe }
+    try {
+        $hit = Get-ChildItem (Join-Path $env:USERPROFILE '.dsh\dsh-runtimes') -Recurse -Filter node.exe -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+        if ($hit) { $script:chatNodeExe = $hit.FullName }
+    } catch { }
+    return $script:chatNodeExe
+}
+
 # ---------- 消息气泡 ----------
 function Add-ChatBubble([string]$role, [string]$text) {
     $wrap = New-Object System.Windows.Controls.Border
@@ -332,7 +350,13 @@ function Send-ChatMessage([string]$text) {
     $script:chatPs = [powershell]::Create()
     $script:chatPs.Runspace = $script:chatRunspace
     [void]$script:chatPs.AddScript({
-        param($url, $key, $json)
+        param($url, $key, $json, $nodeExe, $nodeJs, $logPath)
+
+        function Log-Chat([string]$m) {
+            try { Add-Content -Path $logPath -Value ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $m) -Encoding UTF8 } catch { }
+        }
+
+        $firstErr = ''
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             $r = Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $key" } `
@@ -340,9 +364,40 @@ function Send-ChatMessage([string]$text) {
             if ($r.choices -and $r.choices[0].message) { return [string]$r.choices[0].message.content }
             return 'ERR::返回格式不对：' + ($r | ConvertTo-Json -Compress -Depth 4)
         } catch {
-            return 'ERR::' + $_.Exception.Message
+            $firstErr = $_.Exception.Message
         }
-    }).AddArgument((Get-ChatUrl)).AddArgument($key).AddArgument($body)
+
+        # 回退：Node(OpenSSL)。.NET 在受限进程里可能拿不到 schannel 凭据
+        if ($nodeExe -and (Test-Path $nodeExe) -and $nodeJs -and (Test-Path $nodeJs)) {
+            $dir = Join-Path ([IO.Path]::GetTempPath()) ('dschat-' + [guid]::NewGuid().ToString('N'))
+            try {
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                $rp = Join-Path $dir 'req.json'
+                $op = Join-Path $dir 'out.json'
+                $payload = @{ url = $url; key = $key; body = $json } | ConvertTo-Json -Depth 4 -Compress
+                [IO.File]::WriteAllText($rp, $payload, (New-Object Text.UTF8Encoding($false)))
+                & $nodeExe $nodeJs $rp $op | Out-Null
+                if (Test-Path $op) {
+                    $res = Get-Content $op -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($res.status -eq 200) {
+                        Log-Chat ('chat: .NET 失败，已改用 node（{0}）' -f $firstErr)
+                        $o = $res.body | ConvertFrom-Json
+                        if ($o.choices -and $o.choices[0].message) { return [string]$o.choices[0].message.content }
+                        return 'ERR::返回格式不对'
+                    }
+                    $detail = [string]$res.error
+                    if (-not $detail) { $detail = [string]$res.body }
+                    return ('ERR::HTTP ' + $res.status + ' ' + $detail)
+                }
+            } catch {
+                Log-Chat ('chat: node 回退失败 ' + $_.Exception.Message)
+            } finally {
+                Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        return 'ERR::' + $firstErr
+    }).AddArgument((Get-ChatUrl)).AddArgument($key).AddArgument($body).AddArgument((Find-ChatNode)).AddArgument((Join-Path $script:Dir 'chat-node.js')).AddArgument($script:LogPath)
 
     $script:chatHandle = $script:chatPs.BeginInvoke()
     $script:chatTimer.Start()
