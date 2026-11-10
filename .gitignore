@@ -1,0 +1,10 @@
+# 运行时状态（不进版本库）
+pet.log
+pet-window.json
+pet-state.json
+shots/
+
+# 临时文件
+*.tmp
+*.bak
+_thumbs/

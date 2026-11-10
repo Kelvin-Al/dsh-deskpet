@@ -1,0 +1,22 @@
+﻿{
+    "topmost":  true,
+    "lines":  [
+                  "我是小鲸，DeepSeek 家养的 🐋",
+                  "在写了在写了…",
+                  "这个仓库我熟。",
+                  "要不要我帮你跑个测试？",
+                  "别忘了 commit 呀。",
+                  "我帮你在后台盯着终端。",
+                  "嗯…让我想想。",
+                  "摸鱼是不对的，但我是鲸鱼。"
+              ],
+    "scale":  1,
+    "sprite":  "assets/pet/idle.png",
+    "spriteBusy":  "assets/pet/busy.png",
+    "wander":  false,
+    "spriteHeight":  300,
+    "name":  "小鲸",
+    "spriteHappy":  "assets/pet/happy.png",
+    "bob":  false,
+    "spriteSleepy":  "assets/pet/sleepy.png"
+}
