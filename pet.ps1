@@ -1083,6 +1083,31 @@ $script:lastTick = $null
 Log 'ui built'
 $win.Show()
 Log 'window shown'
+
+# ---------- 系统关机 / 注销：先把自己关掉，别挡着关机 ----------
+try {
+    $script:winHwnd = (New-Object System.Windows.Interop.WindowInteropHelper($win)).Handle
+    $script:winSrc = [System.Windows.Interop.HwndSource]::FromHwnd($script:winHwnd)
+    $script:winHook = [System.Windows.Interop.HwndSourceHook]{
+        param($h, $msg, $wParam, $lParam, [ref]$handled)
+        if ($msg -eq 0x0011) {                 # WM_QUERYENDSESSION
+            Log 'WM_QUERYENDSESSION: allow shutdown'
+            $handled.Value = $true
+            return [IntPtr]1
+        }
+        if ($msg -eq 0x0016) {                 # WM_ENDSESSION
+            Log ('WM_ENDSESSION: closing pet (wParam=' + $wParam + ')')
+            try { $win.Close() } catch { }
+            $handled.Value = $true
+            return [IntPtr]::Zero
+        }
+        return [IntPtr]::Zero
+    }
+    $script:winSrc.AddHook($script:winHook)
+} catch {
+    Log ('session hook failed: ' + $_.Exception.Message)
+}
+
 $timer.Start()
 $script:t = 0.0
 Show-Say ('我是' + $script:cfg.name + ' 🐋') 5

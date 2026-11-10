@@ -35,7 +35,8 @@ $script:actItems = @(
     @{ id = 'copy';     icon = '📋'; label = '复制工作区路径' }
     @{ id = 'say';      icon = '💬'; label = '说句话'; sep = $true }
     @{ id = 'wander';   icon = '🌀'; label = '四处游动' }
-    @{ id = 'config';   icon = '⚙';  label = '打开配置'; sep = $true }
+    @{ id = 'config';   icon = '⚙';  label = '打开配置' }
+    @{ id = 'shutdown'; icon = '🔌'; label = '关机'; sep = $true }
     @{ id = 'quit';     icon = '⏻';  label = '退出' }
 )
 
@@ -165,6 +166,17 @@ function Invoke-PetAction([string]$id) {
             if ($script:wanderOn) { Show-Say '好，我去逛逛 🌀' 2.5 } else { Show-Say '那我就在这儿待着。' 2.5 }
         }
         'config'   { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $script:actConfig + '"') }
+        'shutdown' {
+            $ans = [System.Windows.MessageBox]::Show($script:actWin, '确定要关闭电脑吗？', '小鲸', 'YesNo', 'Question')
+            if ($ans -eq 'Yes') {
+                Show-Say '晚安，电脑要关机啦 🌙' 4
+                try {
+                    Start-Process -FilePath 'shutdown.exe' -ArgumentList '/s', '/t', '5', '/c', '小鲸说：晚安'
+                } catch {
+                    Show-Say ('关机失败：' + $_.Exception.Message) 4
+                }
+            }
+        }
         'quit'     { $script:actWin.Close() }
     }
 }
