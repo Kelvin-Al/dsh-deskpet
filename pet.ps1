@@ -82,6 +82,26 @@ function Log([string]$m) {
         else { Add-Content -Path $script:LogPath -Value $line -Encoding UTF8 }
     } catch { }
 }
+
+# ---------- 行为日志：默认工作区 \Log\pet.log（一行一件事，方便查看） ----------
+$ws = Split-Path -Parent $script:Dir
+if (-not $ws) { $ws = $script:Dir }
+$script:BeatDir  = Join-Path $ws 'Log'
+$script:BeatFile = Join-Path $script:BeatDir 'pet.log'
+try {
+    if (-not (Test-Path -LiteralPath $script:BeatDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $script:BeatDir -Force | Out-Null
+    }
+} catch {
+    $script:BeatFile = Join-Path $script:Dir 'pet-behavior.log'
+}
+function Beat([string]$kind, [string]$text) {
+    try {
+        if (-not $text) { $text = '' }
+        if ($text.Length -gt 60) { $text = $text.Substring(0, 60) + '…' }
+        Add-Content -LiteralPath $script:BeatFile -Value ('[{0:HH:mm:ss}] {1}  {2}' -f (Get-Date), $kind, $text) -Encoding UTF8
+    } catch { }
+}
 Log 'start'
 $script:StateFile = Join-Path $script:Dir 'pet-state.json'
 $script:ConfigFile = Join-Path $script:Dir 'pet-config.json'
@@ -571,12 +591,10 @@ $script:t = 0.0
 $script:st = 'idle'
 $script:stSince = [DateTime]::UtcNow
 $script:happyUntil = [DateTime]::UtcNow
-$script:doneCount = 0        # 已完成、待查看的任务数
 $script:pendingDone = 0      # 本轮轮询新完成的个数
 $script:running = $false
 $script:openMap = @{}        # 上一轮还在跑 turn 的会话
 $script:lastTick = $null
-$script:bubbleKind = ''
 $script:blinkAt = 2.5
 $script:blinkPhase = -1.0
 $script:bubbleUntil = -1.0
@@ -590,6 +608,7 @@ $script:lastStateStamp = 0
 $script:lastSpoke = -99
 
 function Show-Say([string]$text, [double]$sec = 5.0) {
+    Beat '说话' $text
     $bubbleTxt.Text = $text
     $bubble.Visibility = 'Visible'
     $bubble.InvalidateMeasure()
@@ -709,6 +728,16 @@ function Update-DshTasks {
 }
 
 # ---------- 状态机 ----------
+function Get-StateName([string]$s) {
+    switch ($s) {
+        'idle'   { '待机' }
+        'busy'   { '工作' }
+        'happy'  { '开心' }
+        'sleepy' { '休眠' }
+        default  { $s }
+    }
+}
+
 function Set-PetState([string]$s, [DateTime]$now) {
     if ($script:st -eq $s) { return }
     Log ('state: {0} -> {1}' -f $script:st, $s)
@@ -716,34 +745,34 @@ function Set-PetState([string]$s, [DateTime]$now) {
     $script:stSince = $now
 }
 
-function Show-CompletionBubble([int]$newCount) {
-    Log ('completion bubble: new=' + $newCount + ' total=' + $script:doneCount)
+function Show-CompletionBubble {
+    Log 'completion bubble'
     $left = ($script:happyUntil - [DateTime]::UtcNow).TotalSeconds
     if ($left -lt 3) { $left = 3 }
-    Show-Say ('存在（{0}）个已完成任务待查看' -f $newCount) $left
-    $script:bubbleKind = 'review'
+    Show-Say '有新完成任务' $left
 }
 
 function Update-PetState([DateTime]$now) {
     # 1) 任务完成：不管当前在干什么，进开心 / 已经在开心就顺延
     if ($script:pendingDone -gt 0) {
-        $new = $script:pendingDone
-        $script:doneCount += $new
         $script:pendingDone = 0
         if ($script:st -eq 'happy') {
             $script:happyUntil = $script:happyUntil.AddSeconds(30)
+            Beat '任务' '有新完成任务，开心顺延 30 秒'
         } else {
             $script:st = 'happy'
             $script:stSince = $now
             $script:happyUntil = $now.AddSeconds(30)
+            Beat '任务' '有新完成任务，进入开心 30 秒'
         }
-        Log ('completion -> happy (n=' + $script:doneCount + ')')
-        Show-CompletionBubble $new
+        Log 'completion -> happy'
+        Show-CompletionBubble
     }
 
     # 2) 开心到点：有活回工作，没活回待机
     if ($script:st -eq 'happy' -and $now -ge $script:happyUntil) {
         if ($script:running) { Set-PetState 'busy' $now } else { Set-PetState 'idle' $now }
+        Beat '状态' ('开心结束，回到' + (Get-StateName $script:st))
         return
     }
     if ($script:st -eq 'happy') { return }
@@ -752,6 +781,7 @@ function Update-PetState([DateTime]$now) {
     if ($script:st -eq 'sleepy') {
         if ($script:running) {
             Set-PetState 'busy' $now
+            Beat '状态' '来任务了，从休眠醒来'
             Show-Say '来活了，开工！' 2.5
         }
         return
@@ -761,6 +791,8 @@ function Update-PetState([DateTime]$now) {
     $want = if ($script:running) { 'busy' } else { 'idle' }
     if ($script:st -ne $want) {
         Set-PetState $want $now
+        if ($want -eq 'busy') { Beat '状态' '检测到 DSH 任务，进入工作' }
+        else { Beat '状态' '没有任务了，回到待机' }
         if ($want -eq 'busy' -and ($script:t - $script:lastSpoke) -gt 25) {
             Show-Say '开始干活了，我盯着终端 👀' 4
         }
@@ -769,23 +801,29 @@ function Update-PetState([DateTime]$now) {
     # 5) 只有待机连续 3 分钟才休眠；工作状态不睡，进入休眠也不弹气泡
     if ($script:st -eq 'idle' -and ($now - $script:stSince).TotalMinutes -ge 3) {
         Set-PetState 'sleepy' $now
+        Beat '状态' '待机满 3 分钟，进入休眠'
     }
 }
 
 function Invoke-PetDoubleClick([DateTime]$now) {
     Log ('double-click in ' + $script:st)
     if ($script:st -eq 'sleepy') {
+        Beat '互动' '双击唤醒'
         if ($script:running) { Set-PetState 'busy' $now } else { Set-PetState 'idle' $now }
+        Beat '状态' ('醒来，进入' + (Get-StateName $script:st))
         Show-Say '唔…我醒啦' 2
         return
     }
     if ($script:st -eq 'idle') {
+        Beat '互动' '双击摸摸，进入开心 15 秒'
         $script:st = 'happy'
         $script:stSince = $now
         $script:happyUntil = $now.AddSeconds(15)
         $script:spoutTimer = 0
         Show-Say '嘿嘿…好舒服 🐋' 3
+        return
     }
+    Beat '互动' ('双击（' + (Get-StateName $script:st) + '），没有反应')
 }
 
 # ---------- 主循环 ----------
@@ -1000,7 +1038,11 @@ $root.Add_MouseLeftButtonUp({
     $root.ReleaseMouseCapture()
     if (-not $script:pressed) { return }
     $script:pressed = $false
-    if ($script:moved) { Save-Pos; return }
+    if ($script:moved) {
+        Save-Pos
+        Beat '移动' ('拖到 ({0},{1})' -f [Math]::Round($win.Left), [Math]::Round($win.Top))
+        return
+    }
 
     # 自己判双击：500ms 内、位置接近的第二次点击；只有点到角色身上才算
     $now = [DateTime]::UtcNow
@@ -1042,6 +1084,7 @@ $stateTimer.Start()
 $win.Add_Closed({
     $stateTimer.Stop()
     $timer.Stop()
+    Beat '退出' ('桌宠关闭，位置 ({0},{1})' -f [Math]::Round($win.Left), [Math]::Round($win.Top))
     try {
         @{ x = [Math]::Round($win.Left); y = [Math]::Round($win.Top) } |
             ConvertTo-Json | Set-Content (Join-Path $script:Dir 'pet-window.json') -Encoding UTF8
@@ -1083,6 +1126,7 @@ $script:lastTick = $null
 Log 'ui built'
 $win.Show()
 Log 'window shown'
+Beat '启动' ('{0}启动，位置 ({1},{2})' -f $script:cfg.name, [Math]::Round($win.Left), [Math]::Round($win.Top))
 
 # ---------- 系统关机 / 注销：先把自己关掉，别挡着关机 ----------
 try {

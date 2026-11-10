@@ -307,6 +307,7 @@ function Close-PetChat {
 function Clear-PetChat {
     $script:chatHistory = @()
     $script:chatList.Children.Clear()
+    Beat '聊天' '清空对话'
     Add-ChatBubble 'system' '重新开始，说吧。' | Out-Null
 }
 
@@ -325,12 +326,14 @@ function Send-ChatMessage([string]$text) {
 
     $key = Get-ChatKey
     if (-not $key) {
+        Beat '聊天' '缺少 TOKENDANCE_API_KEY'
         Add-ChatBubble 'system' '没找到 TOKENDANCE_API_KEY，翻一下 ~/.dsh/.credentials.yaml。' | Out-Null
         return
     }
 
     Add-ChatBubble 'user' $text | Out-Null
     $script:chatHistory += @{ role = 'user'; content = $text }
+    Beat '聊天' ('发送：' + $text)
 
     $script:chatPendingTb = Add-ChatBubble 'assistant' '…'
     $script:chatBusy = $true
@@ -423,11 +426,13 @@ function Poll-Chat {
 
     if ($out -like 'ERR::*') {
         Log ('chat error: ' + $out.Substring(5))
+        Beat '聊天' ('失败：' + $out.Substring(5))
         Set-ChatPending ('😵 ' + $out.Substring(5))
         return
     }
     if (-not $out) { $out = '（没说话，再问一次？）' }
     Log ('chat reply: ' + $out.Length + ' chars')
+    Beat '聊天' ('回复：' + $out)
     Set-ChatPending $out
     $script:chatHistory += @{ role = 'assistant'; content = $out }
 }

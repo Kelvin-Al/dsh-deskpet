@@ -8,7 +8,6 @@
 $script:actWin       = $win
 $script:actRoot      = $root
 $script:actWorkspace = Split-Path -Parent $script:Dir
-$script:actConfig    = Join-Path $script:Dir 'pet-config.json'
 $script:actPopup     = $null
 $script:actBorder    = $null
 $script:actTt        = $null
@@ -28,14 +27,10 @@ $script:actHoverBrush = Act-Brush '#E8EFFF' 1.0
 $script:actItems = @(
     @{ id = 'dsh';      icon = '🐋'; label = '打开 DSH' }
     @{ id = 'chat';     icon = '💭'; label = '和小鲸聊天' }
-    @{ id = 'review';   icon = '✅'; label = '查看完成任务' }
-    @{ id = 'folder';   icon = '📁'; label = '打开工作区' }
-    @{ id = 'terminal'; icon = '⌨';  label = '打开终端' }
     @{ id = 'shot';     icon = '📸'; label = '截个屏' }
     @{ id = 'copy';     icon = '📋'; label = '复制工作区路径' }
     @{ id = 'say';      icon = '💬'; label = '说句话'; sep = $true }
     @{ id = 'wander';   icon = '🌀'; label = '四处游动' }
-    @{ id = 'config';   icon = '⚙';  label = '打开配置' }
     @{ id = 'shutdown'; icon = '🔌'; label = '关机'; sep = $true }
     @{ id = 'quit';     icon = '⏻';  label = '退出' }
 )
@@ -120,6 +115,7 @@ function Save-PetShot {
         $g.Dispose()
         $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
         $bmp.Dispose()
+        Beat '截图' ('已保存 shots\' + $name)
         $script:actWin.Show()
         Show-Say ('截图放到 shots\' + $name + ' 📸') 4
     } catch {
@@ -128,26 +124,13 @@ function Save-PetShot {
     }
 }
 
-function Open-PetTerminal {
-    $wt = Get-Command wt.exe -ErrorAction SilentlyContinue
-    try {
-        if ($wt) {
-            Start-Process -FilePath $wt.Source -ArgumentList ('-d "' + $script:actWorkspace + '"')
-        } else {
-            Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoExit -Command "Set-Location -LiteralPath ''{0}''"' -f $script:actWorkspace)
-        }
-    } catch {
-        Show-Say ('终端没打开：' + $_.Exception.Message) 4
-    }
-}
-
 # ---------- 执行 ----------
 function Invoke-PetAction([string]$id) {
+    $it = $script:actItems | Where-Object { $_.id -eq $id } | Select-Object -First 1
+    if ($it) { Beat '功能' $it.label } else { Beat '功能' $id }
     switch ($id) {
         'dsh'      { Show-DshWindow }
         'chat'     { if (Get-Command Show-PetChat -ErrorAction SilentlyContinue) { Show-PetChat } }
-        'folder'   { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $script:actWorkspace + '"') }
-        'terminal' { Open-PetTerminal }
         'shot'     { Save-PetShot }
         'copy'     {
             try {
@@ -155,20 +138,16 @@ function Invoke-PetAction([string]$id) {
                 Show-Say '工作区路径已复制 📋' 3
             } catch { Show-Say '剪贴板被占用了，再试一次？' 3 }
         }
-        'review'   {
-            Show-DshWindow
-            $script:doneCount = 0
-            if ($script:bubbleKind -eq 'review') { $script:bubbleUntil = $script:t }
-        }
         'say'      { Say-Random }
         'wander'   {
             $script:wanderOn = -not $script:wanderOn
-            if ($script:wanderOn) { Show-Say '好，我去逛逛 🌀' 2.5 } else { Show-Say '那我就在这儿待着。' 2.5 }
+            if ($script:wanderOn) { Beat '游动' '开始四处游动'; Show-Say '好，我去逛逛 🌀' 2.5 }
+            else { Beat '游动' '停止游动'; Show-Say '那我就在这儿待着。' 2.5 }
         }
-        'config'   { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $script:actConfig + '"') }
         'shutdown' {
             $ans = [System.Windows.MessageBox]::Show($script:actWin, '确定要关闭电脑吗？', '小鲸', 'YesNo', 'Question')
             if ($ans -eq 'Yes') {
+                Beat '关机' '5 秒后关机'
                 Show-Say '晚安，电脑要关机啦 🌙' 4
                 try {
                     Start-Process -FilePath 'shutdown.exe' -ArgumentList '/s', '/t', '5', '/c', '小鲸说：晚安'
@@ -186,10 +165,6 @@ function Update-PetActionChecks {
     $chk = $script:actChecks['wander']
     if ($chk) {
         if ($script:wanderOn) { $chk.Text = '✓' } else { $chk.Text = '' }
-    }
-    $r = $script:actChecks['review']
-    if ($r) {
-        if ($script:doneCount -gt 0) { $r.Text = [string]$script:doneCount } else { $r.Text = '' }
     }
 }
 
@@ -279,7 +254,6 @@ function Initialize-PetActions {
 
         $stack.Children.Add($row) | Out-Null
         if ($it.id -eq 'wander') { $script:actChecks['wander'] = $chk }
-        if ($it.id -eq 'review') { $script:actChecks['review'] = $chk }
     }
 
     $border.Measure([System.Windows.Size]::new(236, [double]::PositiveInfinity))
@@ -331,6 +305,7 @@ function Initialize-PetActions {
 function Show-PetActions {
     Initialize-PetActions
     if ($script:actPopup.IsOpen) { return }
+    Beat '面板' '打开功能面板'
     Update-PetActionChecks
 
     $wa = [System.Windows.SystemParameters]::WorkArea
